@@ -1,0 +1,145 @@
+package pefile
+
+import (
+	"bytes"
+	"encoding/binary"
+	"os"
+)
+
+type PeFile struct {
+	dosHeader      DosHeader
+	imageNtHeaders ImageNtHeaders
+	sections       []ImageSectionHeader
+	executable     []byte
+}
+
+func NewPeFile(executable []byte) *PeFile {
+	var sections = make([]ImageSectionHeader, 3, 3)
+
+	peFile := &PeFile{
+		dosHeader:      CreateDosHeader(),
+		imageNtHeaders: CreateImageNtHeaders(3),
+		executable:     executable,
+	}
+
+	peFile.sections = sections
+	peFile.dosHeader.e_lfanew = 0x40
+
+	peFile.sections[0].name = [8]byte{0x2e, 0x74, 0x65, 0x78, 0x74, 0x00, 0x00, 0x00}
+	peFile.sections[0].address = 0x1000
+	peFile.sections[0].virtualAddress = 0x1000
+	peFile.sections[0].sizeOfRawData = 0x200
+	peFile.sections[0].pointerToRawData = 0x200
+	peFile.sections[0].charactaristics = 0x60000020
+
+	peFile.sections[1].name = [8]byte{0x2e, 0x72, 0x64, 0x61, 0x74, 0x61, 0x00, 0x00}
+	peFile.sections[1].address = 0x1000
+	peFile.sections[1].virtualAddress = 0x2000
+	peFile.sections[1].sizeOfRawData = 0x200
+	peFile.sections[1].pointerToRawData = 0x400
+	peFile.sections[1].charactaristics = 0x40000040
+
+	peFile.sections[2].name = [8]byte{0x2e, 0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00}
+	peFile.sections[2].address = 0x1000
+	peFile.sections[2].virtualAddress = 0x3000
+	peFile.sections[2].sizeOfRawData = 0x200
+	peFile.sections[2].pointerToRawData = 0x600
+	peFile.sections[2].charactaristics = 0xc0000040
+
+	return peFile
+}
+
+func Save(pefile *PeFile, path string) error {
+	var binaryBuffer bytes.Buffer
+
+	var object interface{} = pefile.dosHeader
+	werr := binary.Write(&binaryBuffer, binary.LittleEndian, object)
+	if werr != nil {
+		return werr
+	}
+
+	object = pefile.imageNtHeaders
+	werr = binary.Write(&binaryBuffer, binary.LittleEndian, object)
+	if werr != nil {
+		return werr
+	}
+
+	object = pefile.sections
+	werr = binary.Write(&binaryBuffer, binary.LittleEndian, object)
+	if werr != nil {
+		return werr
+	}
+
+	paddingLen := pefile.sections[0].pointerToRawData - uint32(binaryBuffer.Len())
+	padding := make([]byte, paddingLen)
+	object = padding
+	werr = binary.Write(&binaryBuffer, binary.LittleEndian, object)
+	if werr != nil {
+		return werr
+	}
+
+	object = pefile.executable
+	werr = binary.Write(&binaryBuffer, binary.LittleEndian, object)
+	if werr != nil {
+		return werr
+	}
+
+	paddingLen = pefile.sections[1].pointerToRawData - uint32(binaryBuffer.Len())
+	padding = make([]byte, paddingLen)
+	object = padding
+	werr = binary.Write(&binaryBuffer, binary.LittleEndian, object)
+	if werr != nil {
+		return werr
+	}
+
+	reloc := []byte{
+		0x3c, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x78, 0x20, 0x00, 0x00,
+		0x68, 0x20, 0x00, 0x00, 0x44, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x85, 0x20, 0x00, 0x00, 0x70, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4c, 0x20, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x5a, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x45, 0x78,
+		0x69, 0x74, 0x50, 0x72, 0x6f, 0x63, 0x65, 0x73, 0x73, 0x00, 0x00, 0x00, 0x4d, 0x65, 0x73, 0x73,
+		0x61, 0x67, 0x65, 0x42, 0x6f, 0x78, 0x41, 0x00, 0x4c, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x5a, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6b, 0x65, 0x72, 0x6e, 0x65, 0x6c, 0x33, 0x32,
+		0x2e, 0x64, 0x6c, 0x6c, 0x00, 0x75, 0x73, 0x65, 0x72, 0x33, 0x32, 0x2e, 0x64, 0x6c, 0x6c, 0x00,
+	}
+	object = reloc
+	werr = binary.Write(&binaryBuffer, binary.LittleEndian, object)
+	if werr != nil {
+		return werr
+	}
+
+	paddingLen = pefile.sections[2].pointerToRawData - uint32(binaryBuffer.Len())
+	padding = make([]byte, paddingLen)
+	object = padding
+	werr = binary.Write(&binaryBuffer, binary.LittleEndian, object)
+	if werr != nil {
+		return werr
+	}
+
+	data := []byte{
+		0x41, 0x20, 0x73, 0x69, 0x6d, 0x70, 0x6c, 0x65, 0x20, 0x50, 0x45, 0x20, 0x65, 0x78, 0x65, 0x63,
+		0x75, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x00, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x77, 0x6f, 0x72,
+		0x6c, 0x64, 0x21, 0x20, 0x48, 0x65, 0x61, 0x74, 0x68, 0x65, 0x72, 0x00,
+	}
+	object = data
+	werr = binary.Write(&binaryBuffer, binary.LittleEndian, object)
+	if werr != nil {
+		return werr
+	}
+
+	paddingLen = pefile.sections[2].sizeOfRawData - uint32(len(data))
+	padding = make([]byte, paddingLen)
+	object = padding
+	werr = binary.Write(&binaryBuffer, binary.LittleEndian, object)
+	if werr != nil {
+		return werr
+	}
+
+	file, err := os.Create(path)
+	if err == nil {
+		file.Write(binaryBuffer.Bytes())
+	}
+	file.Close()
+	return err
+}
